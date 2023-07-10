@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 )
 
 func (pl *PeerList) InitializePeers(peerParams []struct {
@@ -236,10 +237,21 @@ func (p *Peer) sendMessage(message *Message) error {
 }
 
 func (p *Peer) receiveMessage() (*Message, error) {
+	// Set a deadline on the connection for the read operation
+	deadline := time.Now().Add(5 * time.Second)
+	err := p.Conn.SetReadDeadline(deadline)
+	if err != nil {
+		return nil, err
+	}
+
 	decoder := json.NewDecoder(p.Conn)
 	var message Message
-	err := decoder.Decode(&message)
+	err = decoder.Decode(&message)
 	if err != nil {
+		// If the deadline was exceeded, return a custom error message
+		if err, ok := err.(net.Error); ok && err.Timeout() {
+			return nil, fmt.Errorf("receiveMessage: timeout")
+		}
 		return nil, err
 	}
 	return &message, nil
