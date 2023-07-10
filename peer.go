@@ -95,6 +95,7 @@ func handleConnection(conn net.Conn) {
 
 	conn.Close()
 }
+
 func StartPeerNetwork(myKeys KeyPair) *PeerManager {
 	// Instantiate our PeerManager and our own Peer
 	Log(DEBUG, "starting peer networking..")
@@ -158,7 +159,7 @@ func StartPeerNetwork(myKeys KeyPair) *PeerManager {
 			peer.PublicKey = helloResponse.PublicKey
 
 			// Add to PeerManager's peers
-			peerManager.Peers[peer.NodeID] = peer
+			peerManager.AddPeer(peer)
 		}(info)
 	}
 
