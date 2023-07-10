@@ -50,6 +50,51 @@ func NewPeerManager(myNode *Peer) *PeerManager {
 	}
 }
 
+func handleConnection(conn net.Conn) {
+	decoder := json.NewDecoder(conn)
+	for {
+		var message Message
+		err := decoder.Decode(&message)
+		if err != nil {
+			Log(ERROR, fmt.Sprintf("Failed to decode message from peer: %v", err))
+			break
+		}
+
+		switch message.Type {
+		case MessageTypeHelloRequest:
+			// If we received a HelloRequest, verify the peer's public key (add this functionality)
+			// For this example, we're assuming all HelloRequest messages have valid keys and NodeID
+
+			// Create a new peer and add it to the GlobalPeers map
+			newPeer := &Peer{
+				NodeID:    message.HelloReq.NodeID,
+				PublicKey: message.HelloReq.PublicKey,
+				Conn:      conn,
+			}
+			GlobalPeers[newPeer.NodeID] = newPeer
+
+			// Generate a HelloResponse and send it back
+			response := &HelloResponse{
+				NodeID:    MyNodeID,
+				PublicKey: MyPublicKey,
+			}
+			respMessage := &Message{
+				Type:     MessageTypeHelloResponse,
+				HelloRes: response,
+			}
+			encoder := json.NewEncoder(conn)
+			err = encoder.Encode(respMessage)
+			if err != nil {
+				Log(ERROR, fmt.Sprintf("Failed to send HelloResponse to peer: %v", err))
+			}
+		default:
+			// If we received a different message type, log a message and do nothing
+			Log(INFO, fmt.Sprintf("Received unexpected message type: %v", message.Type))
+		}
+	}
+
+	conn.Close()
+}
 func StartPeerNetwork(myKeys KeyPair) *PeerManager {
 	// Instantiate our PeerManager and our own Peer
 	Log(DEBUG, "starting peer networking..")
@@ -78,40 +123,46 @@ func StartPeerNetwork(myKeys KeyPair) *PeerManager {
 		{"165.22.9.57", 19876},
 	}
 
-	for _, s := range bootstrapPeers {
-		Log(DEBUG, fmt.Sprintf("bootstrap peer: %s:%d", s.ip, s.port))
-	}
+	// Use a WaitGroup to wait for all connection attempts to finish
+	var wg sync.WaitGroup
 
-	// Connect to each bootstrap peer
 	for _, info := range bootstrapPeers {
-		peer := &Peer{
-			Address: net.ParseIP(info.ip),
-			Port:    info.port,
-		}
-		if err := peer.Connect(); err != nil {
-			Log(ERROR, fmt.Sprintf("failed to connect to peer %s:%d", info.ip, info.port))
-			continue
-		}
+		wg.Add(1)
+		go func(info struct {
+			ip   string
+			port uint16
+		}) { // Launch a goroutine for each peer
+			defer wg.Done()
+			peer := &Peer{
+				Address: net.ParseIP(info.ip),
+				Port:    info.port,
+			}
+			if err := peer.Connect(peerManager); err != nil {
+				Log(ERROR, fmt.Sprintf("failed to connect to peer %s:%d", info.ip, info.port))
+				return
+			}
 
-		// Exchange HelloRequest and HelloResponse to get NodeID
-		helloRequest := &HelloRequest{
-			NodeID:    myNode.NodeID,
-			PublicKey: myNode.PublicKey,
-		}
+			// Exchange HelloRequest and HelloResponse to get NodeID
+			helloRequest := &HelloRequest{
+				NodeID:    myNode.NodeID,
+				PublicKey: myNode.PublicKey,
+			}
+			helloResponse, err := peer.SendHelloRequest(helloRequest)
+			if err != nil {
+				Log(ERROR, fmt.Sprintf("failed to send HelloRequest to peer %s:%d", info.ip, info.port))
+				return
+			}
 
-		helloResponse, err := peer.SendHelloRequest(helloRequest)
-		if err != nil {
-			Log(ERROR, fmt.Sprintf("failed to send HelloRequest to peer %s:%d", info.ip, info.port))
-			continue
-		}
+			// After successfully getting HelloResponse, set NodeID and PublicKey
+			peer.NodeID = helloResponse.NodeID
+			peer.PublicKey = helloResponse.PublicKey
 
-		// After successfully getting HelloResponse, set NodeID and PublicKey
-		peer.NodeID = helloResponse.NodeID
-		peer.PublicKey = helloResponse.PublicKey
-
-		// Add to PeerManager's peers
-		peerManager.Peers[peer.NodeID] = peer
+			// Add to PeerManager's peers
+			peerManager.Peers[peer.NodeID] = peer
+		}(info)
 	}
+
+	wg.Wait() // Wait for all goroutines to finish
 
 	// Discover new peers
 	peerManager.DiscoverPeers()
@@ -120,7 +171,7 @@ func StartPeerNetwork(myKeys KeyPair) *PeerManager {
 }
 
 // Establishes a connection to the peer.
-func (p *Peer) Connect() error {
+func (p *Peer) Connect(pm *PeerManager) error {
 	address := net.JoinHostPort(p.Address.String(), strconv.Itoa(int(p.Port)))
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
@@ -128,6 +179,10 @@ func (p *Peer) Connect() error {
 	}
 
 	p.Conn = conn
+
+	// Add the connected peer to the PeerManager
+	pm.AddPeer(p)
+
 	return nil
 }
 
