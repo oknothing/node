@@ -90,7 +90,8 @@ func handleConnection(conn net.Conn) {
 			}
 		default:
 			// If we received a different message type, log a message and do nothing
-			Log(INFO, fmt.Sprintf("Received unexpected message type: %v", message.Type))
+			// Log(INFO, fmt.Sprintf("Received unexpected message type: %v", message.Type))
+			Log(WARNING, fmt.Sprintf("Received unexpected message type: %v", message))
 		}
 	}
 
@@ -238,7 +239,7 @@ func (p *Peer) sendMessage(message *Message) error {
 
 func (p *Peer) receiveMessage() (*Message, error) {
 	// Set a deadline on the connection for the read operation
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(2 * time.Second)
 	err := p.Conn.SetReadDeadline(deadline)
 	if err != nil {
 		return nil, err
